@@ -1,0 +1,335 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NHAI Backend — Local Development docker-compose
+# Phase 1 & 2: Auth Service, Enrollment Service, Attendance Sync Service
+#
+# Usage:
+#   docker compose up --build          # start everything
+#   docker compose down -v             # tear down + remove volumes
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  nhai-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  nhai-redis-data:
+
+
+services:
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: nhai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nhai
+      POSTGRES_PASSWORD: nhai_dev_password
+      POSTGRES_DB: nhai_auth
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d   # SQL init scripts
+    ports:
+      - "5432:5432"
+    networks:
+      - nhai-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nhai -d nhai_auth"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: nhai-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+    volumes:
+      - nhai-redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - nhai-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── LocalStack (SQS, EventBridge) ──────────────────────────────────────────
+  localstack:
+    image: localstack/localstack:3
+    container_name: nhai-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=sqs,events
+      - DEBUG=1
+      - AWS_DEFAULT_REGION=ap-south-1
+    volumes:
+      - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - ./init-localstack:/etc/localstack/init/ready.d
+    networks:
+      - nhai-net
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - awslocal sqs list-queues
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Phase 1: Auth Service ──────────────────────────────────────────────────
+  auth-service:
+    build:
+      context: ../services/auth-service
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: nhai-auth-service
+    restart: unless-stopped
+    env_file:
+      - ../services/auth-service/.env
+    environment:
+      ENV: development
+      DEBUG: "true"
+      DATABASE_URL: postgresql+asyncpg://nhai:nhai_dev_password@postgres:5432/nhai_auth
+      REDIS_URL: redis://redis:6379/0
+      USE_AWS_SECRETS: "false"
+    ports:
+      - "8001:8000"
+    networks:
+      - nhai-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+  # ── Phase 2: Enrollment Service ────────────────────────────────────────────
+  enrollment-service:
+    build:
+      context: ../services/enrollment-service
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: nhai-enrollment
+    restart: unless-stopped
+    ports:
+      - "8002:8000"
+    networks:
+      - nhai-net
+    environment:
+      - ENV=development
+      - DATABASE_URL=postgresql+asyncpg://nhai:nhai_dev_password@postgres:5432/nhai_auth
+      - AUTH_JWKS_URL=http://auth-service:8000/auth/token/jwks
+      - AUTH_SERVICE_URL=http://auth-service:8000
+      - INTERNAL_API_KEY=dev-internal-key-change-in-prod
+      - AES_EMBEDDING_KEY_HEX=0000000000000000000000000000000000000000000000000000000000000000
+      - USE_AWS_SECRETS=false
+      - YUNET_MODEL_PATH=models/yunet.onnx
+      - MOBILEFACENET_MODEL_PATH=models/mobilefacenet.onnx
+    volumes:
+      - ../services/enrollment-service/models:/app/models
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+  # ── Phase 2: Attendance Sync Service ───────────────────────────────────────
+  attendance-service:
+    build:
+      context: ../services/attendance-service
+      dockerfile: Dockerfile
+    container_name: nhai-attendance
+    restart: unless-stopped
+    ports:
+      - "8003:8000"
+    networks:
+      - nhai-net
+    environment:
+      - ENV=development
+      - DATABASE_URL=postgresql+asyncpg://nhai:nhai_dev_password@postgres:5432/nhai_auth
+      - SYNC_DATABASE_URL=postgresql://nhai:nhai_dev_password@postgres:5432/nhai_auth
+      - AUTH_JWKS_URL=http://auth-service:8000/auth/token/jwks
+      - AUTH_SERVICE_URL=http://auth-service:8000
+      - INTERNAL_API_KEY=dev-internal-key-change-in-prod
+      - AWS_REGION=ap-south-1
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/nhai-attendance-queue
+      - EVENT_BUS_NAME=nhai-event-bus
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+  # ── Phase 3: Model Delivery Service ────────────────────────────────────────
+  model-service:
+    build:
+      context: ../services/model-service
+      dockerfile: Dockerfile
+    container_name: nhai-model
+    restart: unless-stopped
+    ports:
+      - "8004:8000"
+    networks:
+      - nhai-net
+    environment:
+      - ENV=development
+      - DATABASE_URL=postgresql+asyncpg://nhai:nhai_dev_password@postgres:5432/nhai_auth
+      - AUTH_JWKS_URL=http://auth-service:8000/auth/token/jwks
+      - AWS_REGION=ap-south-1
+      - MODEL_BUCKET_NAME=nhai-models-local
+      - S3_ENDPOINT_URL=http://localstack:4566
+      - PRESIGNED_URL_EXPIRY_SECONDS=900
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+
+  # ── Phase 4: Audit & Security Service ──────────────────────────────────────
+  audit-service:
+    build:
+      context: ../services/audit-service
+      dockerfile: Dockerfile
+    container_name: nhai-audit
+    restart: unless-stopped
+    ports:
+      - "8005:8000"
+    networks:
+      - nhai-net
+    environment:
+      - ENV=development
+      - DATABASE_URL=postgresql+asyncpg://nhai:nhai_dev_password@postgres:5432/nhai_auth
+      - SYNC_DATABASE_URL=postgresql://nhai:nhai_dev_password@postgres:5432/nhai_auth
+      - AUTH_JWKS_URL=http://auth-service:8000/auth/token/jwks
+      - AWS_REGION=ap-south-1
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/nhai-audit-queue
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+  # ── Phase 4: Notification Service ──────────────────────────────────────────
+  notification-service:
+    build:
+      context: ../services/notification-service
+      dockerfile: Dockerfile
+    container_name: nhai-notification
+    restart: unless-stopped
+    networks:
+      - nhai-net
+    environment:
+      - ENV=development
+      - AWS_REGION=ap-south-1
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/nhai-notification-queue
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    depends_on:
+      localstack:
+        condition: service_healthy
+
+  # ── Phase 5: Reporting Service ─────────────────────────────────────────────
+  reporting-service:
+    build:
+      context: ../services/reporting-service
+      dockerfile: Dockerfile
+    container_name: nhai-reporting
+    restart: unless-stopped
+    ports:
+      - "8006:8000"
+    networks:
+      - nhai-net
+    environment:
+      - ENV=development
+      - DATABASE_URL=postgresql+asyncpg://nhai:nhai_dev_password@postgres:5432/nhai_auth
+      - SYNC_DATABASE_URL=postgresql://nhai:nhai_dev_password@postgres:5432/nhai_auth
+      - AUTH_JWKS_URL=http://auth-service:8000/auth/token/jwks
+      - AWS_REGION=ap-south-1
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/nhai-reporting-queue
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+  # ── pgAdmin (optional dev UI) ──────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: nhai-pgadmin
+    restart: unless-stopped
+    profiles: ["tools"]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@nhai.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    networks:
+      - nhai-net
+    depends_on:
+      - postgres

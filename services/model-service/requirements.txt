@@ -1,0 +1,20 @@
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9      # For uploading new model binaries
+
+# Database
+sqlalchemy[asyncio]==2.0.30
+asyncpg==0.29.0
+alembic==1.13.1
+
+# AWS S3 Integration
+boto3==1.34.110
+aioboto3==13.0.1             # Async AWS client
+botocore==1.34.110
+
+# Security / Auth
+pyjwt[crypto]==2.8.0
+cryptography==42.0.7
+httpx==0.27.0
+async-lru==2.0.4
+pydantic-settings==2.2.1
