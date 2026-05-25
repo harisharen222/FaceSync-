@@ -66,24 +66,34 @@ When the field supervisor is out in a remote location with no internet, the app 
 3. **Face Recognition:** Pass the cropped face to the MobileFaceNet `.tflite` model to extract the 128D embedding.
 4. **Matching:** Compare this embedding (using Cosine Similarity) against the decrypted SQLite database of enrolled workers. If similarity > 0.65, it's a match.
 5. **Construct the Record:**
+   Create the exact payload object (excluding the signature):
    ```json
    {
-     "id": "uuid-for-record",
-     "worker_id": "W123",
-     "timestamp_utc": "2026-05-25T10:00:00Z",
      "confidence": 0.92,
+     "id": "uuid-for-record",
+     "liveness_passed": true,
      "liveness_score": 0.88,
-     "liveness_passed": true
+     "timestamp_utc": "2026-05-25T10:00:00Z",
+     "worker_id": "NHAI-DEL-1234"
    }
    ```
-6. **Cryptographic Signing:** Serialize that JSON to a string, and sign it using the device's ECDSA private key.
-7. **Store in SQLite:** Save the JSON payload and the `signature_hex` in a local SQLite `pending_sync` table.
+6. **Cryptographic Signing (CRITICAL):** 
+   You must serialize the JSON canonically (alphabetical keys, no spaces) before signing, to ensure the backend hash matches exactly. In JavaScript, use a deterministic stringify function or ensure alphabetical ordering without whitespace:
+   ```javascript
+   const payloadString = JSON.stringify(payload, Object.keys(payload).sort());
+   ```
+   Sign `payloadString` using the device's ECDSA private key to get `signature_hex`.
+7. **Store in SQLite:** Save the JSON payload *plus* the `signature_hex` in a local SQLite `pending_sync` table.
 
 ---
 
 ## 5. Sync & Purge Mechanism
 
 When the device detects a stable internet connection (WiFi or Cellular), it must flush the `pending_sync` SQLite table to the backend.
+
+### HTTP Headers
+For *all* authenticated requests below, you must include the JWT:
+`Authorization: Bearer <DEVICE_JWT>`
 
 1. **Query** the local SQLite table for all pending records.
 2. **POST** `/attendance/sync` (Requires Device JWT)
