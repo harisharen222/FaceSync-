@@ -1,14 +1,17 @@
-# NHAI Biometric Attendance — Backend Microservices
+# NHAI Biometric Attendance — Backend Microservices (Hackathon 7.0 Submission)
 
 Offline-first, zero-trust, sub-400ms biometric attendance platform for NHAI field operations.
+**Built specifically for NHAI Hackathon 7.0.**
 
 ---
 
-## Phase 1, 2, & 3 — Core Architecture
+## Architecture Phases Completed
 
-Phase 1 built the zero-trust Auth Service. 
-Phase 2 added the Enrollment Service (face AI pipeline) and Attendance Sync Service (offline ECDSA verification + SQS queuing).
-Phase 3 added the Model Delivery Service (OTA TFLite updates via CloudFront presigned URLs).
+- **Phase 1: Zero-Trust Auth Service:** ECDSA P-256 hardware-backed device authentication and RS256 JWTs.
+- **Phase 2: Enrollment & Attendance Sync:** Face AI pipeline (YuNet + MobileFaceNet) and Offline ECDSA signature verification with SQS enqueuing for high-throughput sync.
+- **Phase 3: OTA Model Delivery:** Delivering lightweight (~2MB) `.tflite` models to edge devices via CloudFront presigned URLs.
+- **Phase 4: Audit & Notification (Event-Driven):** EventBridge decoupled architecture logging all actions and alerting on `SpoofingDetected`.
+- **Phase 5: Reporting Service (CQRS):** Read-optimized materialized views for fast analytical dashboarding of attendance metrics.
 
 ### Quick Start (Local Development)
 
@@ -46,6 +49,8 @@ Services will be available at:
 - **Enrollment Service:** `http://localhost:8002/docs`
 - **Attendance Sync Service:** `http://localhost:8003/docs`
 - **Model Delivery Service:** `http://localhost:8004/docs`
+- **Audit Service:** `http://localhost:8005/docs`
+- **Reporting Service:** `http://localhost:8006/docs`
 - **pgAdmin:**      `http://localhost:5050` *(start with `--profile tools`)*
 - **LocalStack (SQS/EventBridge/S3):** `http://localhost:4566`
 
@@ -64,165 +69,81 @@ pytest tests/unit/ -v
 ```
 nhai-backend/
 ├── services/
-│   ├── auth-service/           # Phase 1: JWT + ECDSA device auth
-│   │   └── ...                 # (see phase 1 structure)
-│   │
-│   ├── enrollment-service/     # Phase 2: Face photo → ONNX AI → AES-256-GCM
-│   │   ├── app/
-│   │   │   ├── pipeline.py     # YuNet + alignment + CLAHE + MobileFaceNet
-│   │   │   ├── onnx_runner.py  # CPU inference wrappers
-│   │   │   ├── encryption.py   # AES-256-GCM embedding encryption
-│   │   │   └── routes/         # POST /enroll/worker/{id}/face, GET /enroll/sync
-│   │   └── Dockerfile
-│   │
-│   └── attendance-service/     # Phase 2: Offline sync ingress
-│       ├── app/
-│       │   ├── validator.py    # ECDSA signature verification + Deduplication
-│       │   ├── sqs_producer.py # Async enqueuing to SQS
-│       │   ├── sqs_consumer.py # Background worker (SQS → Postgres + EventBridge)
-│       │   └── routes/         # POST /attendance/sync
-│       └── Dockerfile
-│
-│   └── model-service/          # Phase 3: OTA Model Delivery
-│       ├── app/
-│       │   ├── s3_client.py    # Boto3 client for uploads & Presigned URLs
-│       │   └── routes/         # Admin upload + Device manifest
-│       └── Dockerfile
+│   ├── auth-service/           # JWT + ECDSA device auth
+│   ├── enrollment-service/     # Face photo → ONNX AI → AES-256-GCM
+│   ├── attendance-service/     # Offline sync ingress + Deduplication
+│   ├── model-service/          # OTA Model Delivery via S3 Presigned URLs
+│   ├── audit-service/          # EventBridge consumer for compliance logging
+│   ├── notification-service/   # SQS worker for spoofing alerts
+│   └── reporting-service/      # CQRS read-optimized analytics views
 │
 ├── infrastructure/
 │   ├── docker-compose.yml      # All services + Postgres + Redis + LocalStack
 │   ├── init-db/
 │   │   └── 01_create_schemas.sql
 │   ├── init-localstack/
-│   │   └── setup.sh            # Auto-creates SQS queue, EventBridge bus, S3 bucket
-│   └── cdk/
-│       ├── app.py
-│       ├── network_stack.py
-│       ├── secrets_stack.py
-│       ├── rds_stack.py
-│       ├── elasticache_stack.py
-│       ├── s3_stack.py         # Model bucket + CloudFront OAC
-│       ├── sqs_stack.py        # Standard Queue + DLQ
-│       ├── eventbridge_stack.py# Custom Event Bus
-│       ├── ecs_stack.py        # Fargate tasks (Auth, Enroll, Att, Model)
-│       └── apigw_stack.py      # HTTP API → ALB
+│   │   └── setup.sh            # Auto-creates SQS queues, EventBus, S3 bucket
+│   └── cdk/                    # Complete AWS CDK IaC (Fargate, ALB, APIGW)
 └── README.md
 ```
 
 ---
 
-## Auth Service API Reference
+## API Reference
 
-Base URL (local): `http://localhost:8001`  
+Base URL (local): `http://localhost:<PORT>`  
 Base URL (cloud): `https://<api-id>.execute-api.ap-south-1.amazonaws.com`
 
-### Admin Endpoints
-
+### Auth Service (Port 8001)
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `POST` | `/auth/admin/login` | None | Login → RS256 JWT |
-| `POST` | `/auth/admin` | Superadmin JWT | Create admin account |
-| `GET` | `/auth/admin/me` | Admin JWT | Own profile |
-
-### Device Endpoints
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
 | `POST` | `/auth/device/register` | Admin JWT | Register device + ECDSA public key |
 | `GET` | `/auth/device/challenge/{id}` | None | Get ECDSA challenge nonce |
-| `POST` | `/auth/device/token` | ECDSA signed challenge | Issue device JWT |
-| `GET` | `/auth/device/{id}/pubkey` | Internal API key | Fetch device public key |
+| `POST` | `/auth/device/token` | Signed challenge | Issue device JWT |
 
-### Token Endpoints (Auth Service)
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `POST` | `/auth/token/refresh` | Refresh token | Rotate access token |
-| `POST` | `/auth/token/revoke` | Access token | Blacklist a token |
-| `GET` | `/auth/token/jwks` | None | RS256 public key (JWKS format) |
-
-### Enrollment Service
-
+### Enrollment Service (Port 8002)
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `POST` | `/enroll/worker` | Admin JWT | Create worker record |
 | `POST` | `/enroll/worker/{id}/face` | Admin JWT | Upload photo → AI pipeline → AES encrypt |
 | `GET` | `/enroll/sync/{device_id}` | Device JWT | Delta pull encrypted embeddings for site |
 
-### Attendance Sync Service
-
+### Attendance Sync Service (Port 8003)
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `POST` | `/attendance/sync` | Device JWT | Ingest batch of offline ECDSA-signed records |
-| `GET` | `/attendance/worker/{id}` | Admin JWT | Query attendance history for a worker |
-| `GET` | `/attendance/site/{code}` | Admin JWT | Query attendance history for a site |
 
-### Model Delivery Service (OTA)
-
+### Model Delivery Service (Port 8004)
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | `POST` | `/models/admin/upload` | Admin JWT | Upload new .tflite to S3 |
-| `PATCH` | `/models/admin/rollout/{id}` | Admin JWT | Mark a release as ACTIVE |
-| `GET` | `/models/manifest` | Device JWT | Get presigned URLs for active models |
-| `POST` | `/models/status` | Device JWT | Report successfully loaded models |
+| `PATCH`| `/models/admin/rollout/{id}` | Admin JWT | Mark a release as ACTIVE |
+| `GET`  | `/models/manifest` | Device JWT | Get presigned URLs for active models |
+
+### Audit Service (Port 8005)
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/audit/logs` | Admin JWT | Search compliance logs (event-sourced) |
+
+### Reporting Service (Port 8006)
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/reports/site/{site_code}/daily` | Admin JWT | Daily aggregated attendance metrics |
+| `GET` | `/reports/worker/{worker_id}/monthly` | Admin JWT | Monthly attendance days for a worker |
 
 ---
 
-## AWS Deployment
+## Security & Hackathon 7.0 Alignment
 
-```bash
-# Install CDK dependencies
-cd infrastructure/cdk
-pip install aws-cdk-lib constructs
+**Zero-Trust Offline Authentication:**
+- Devices generate an ECDSA P-256 keypair locally in the TEE.
+- Attendance records (including liveness score) are **signed cryptographically** by the device while offline.
+- When internet is restored, the `Attendance Sync Service` verifies this signature against the public key registered on the server. If spoofing is detected, it emits a `SpoofingDetected` event via EventBridge.
 
-# Bootstrap CDK (once per account/region)
-cdk bootstrap aws://YOUR_ACCOUNT_ID/ap-south-1
+**Edge AI Lightweight Integration:**
+- The `Model Delivery Service` supports OTA updates of highly compressed `.tflite` models (<5MB total for YuNet + MobileFaceNet).
+- Keeping models out of the React Native bundle satisfies the Hackathon's strict <20MB footprint requirement.
 
-# Synthesize CloudFormation templates
-cdk synth --context env=staging
-
-# Deploy Phase 1 stacks
-cdk deploy --all --context env=staging --require-approval never
-
-# After deploy: populate RS256 keys in Secrets Manager
-aws secretsmanager put-secret-value \
-  --secret-id nhai/staging/rs256-keypair \
-  --secret-string "{\"private_key\": \"$(cat private.pem)\", \"public_key\": \"$(cat public.pem)\"}"
-```
-
----
-
-## Security Architecture
-
-```
-Internet
-   │ HTTPS
-   ▼
-API Gateway (TLS termination)
-   │ VPC Link (private)
-   ▼
-Internal ALB (private subnet)
-   │ HTTP
-   ▼
-ECS Fargate Task (private subnet)
-  ├── RS256 private key  → AWS Secrets Manager
-  ├── Token blacklist    → ElastiCache Redis (isolated subnet, TLS)
-  └── Auth DB            → RDS PostgreSQL (isolated subnet, encrypted)
-```
-
-**Zero-trust principles applied:**
-- Device authentication via ECDSA P-256 challenge-response (private key never leaves TEE)
-- RS256 JWTs — Auth Service holds private key; all others verify with public key only
-- Token blacklisting with dual-write (Redis fast-path + PostgreSQL durability)
-- Least-privilege IAM task roles (each service reads only its own secrets)
-- All DB/Redis in isolated subnets with no internet access
-
----
-
-## Upcoming Phases
-
-| Phase | Services |
-|---|---|
-| **Phase 4** | Audit & Security Service + Notification Service |
-| **Phase 5** | Reporting Service |
-| **Phase 6** | CI/CD pipelines + full CDK deploy |
+**Scalable Sync & Purge Mechanism:**
+- The `/attendance/sync` ingress uses an **SQS buffer**. When a site restores network connectivity, thousands of pending records might hit the server simultaneously. The ALB + API Gateway route traffic to Fargate, which pushes directly to SQS, allowing background workers to deduplicate and batch-insert into PostgreSQL gracefully without overwhelming the DB.
