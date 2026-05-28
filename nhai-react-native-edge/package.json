@@ -1,0 +1,25 @@
+{
+  "name": "nhai-edge-app-module",
+  "version": "1.0.0",
+  "description": "Standalone React Native Module for Offline Face Liveness and Sync",
+  "main": "index.js",
+  "dependencies": {
+    "react": "18.2.0",
+    "react-native": "0.74.1",
+    "react-native-vision-camera": "^4.0.0",
+    "react-native-worklets-core": "^1.3.3",
+    "@react-native-ml-kit/face-detection": "^1.0.1",
+    "react-native-fast-tflite": "^1.1.2",
+    "@react-native-community/netinfo": "^11.3.1",
+    "react-native-quick-sqlite": "^8.1.0",
+    "elliptic": "^6.5.5",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.6",
+    "@types/react-native": "^0.73.0",
+    "@types/elliptic": "^6.4.18",
+    "@types/uuid": "^9.0.8",
+    "typescript": "^5.0.4"
+  }
+}
