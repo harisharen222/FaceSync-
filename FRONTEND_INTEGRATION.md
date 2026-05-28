@@ -61,8 +61,8 @@ Before going offline into the field, the device must pull down the latest face e
 
 When the field supervisor is out in a remote location with no internet, the app functions entirely offline.
 
-1. **Camera Feed:** Pass the camera frames to the downloaded YuNet `.tflite` model to detect the face bounding box.
-2. **Liveness Detection:** Implement basic UI challenges (e.g., "Please smile" or "Turn head left").
+1. **Camera Feed:** Pass the camera frames to the downloaded YuNet `.tflite` model to detect the face bounding box and lightweight landmarks. Keep this native/JSI-backed; do not call async JS APIs from a Vision Camera worklet.
+2. **Liveness Detection:** Use an open-source, offline active challenge such as "look straight -> turn head left -> turn head right" from YuNet landmarks. Avoid proprietary ML Kit dependencies if the prototype must satisfy the open-source-only requirement.
 3. **Face Recognition:** Pass the cropped face to the MobileFaceNet `.tflite` model to extract the 128D embedding.
 4. **Matching:** Compare this embedding (using Cosine Similarity) against the decrypted SQLite database of enrolled workers. If similarity > 0.65, it's a match.
 5. **Construct the Record:**
@@ -78,9 +78,9 @@ When the field supervisor is out in a remote location with no internet, the app 
    }
    ```
 6. **Cryptographic Signing (CRITICAL):** 
-   You must serialize the JSON canonically (alphabetical keys, no spaces) before signing, to ensure the backend hash matches exactly. In JavaScript, use a deterministic stringify function or ensure alphabetical ordering without whitespace:
+   You must serialize the JSON canonically (alphabetical keys, no spaces) before signing, to ensure the backend hash matches exactly. Use recursive deterministic serialization rather than relying on normal object insertion order:
    ```javascript
-   const payloadString = JSON.stringify(payload, Object.keys(payload).sort());
+   const payloadString = canonicalStringify(payload);
    ```
    Sign `payloadString` using the device's ECDSA private key to get `signature_hex`.
 7. **Store in SQLite:** Save the JSON payload *plus* the `signature_hex` in a local SQLite `pending_sync` table.

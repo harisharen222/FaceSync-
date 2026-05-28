@@ -41,7 +41,7 @@ To align with the backend's architecture and the NHAI Hackathon 7.0 constraints,
 
 - [ ] **Camera Integration:** Integrate `react-native-vision-camera` for real-time frame processing via frame processors.
 - [ ] **Face Detection (YuNet):** Run the YuNet model on the camera frames to draw bounding boxes around faces.
-- [ ] **Liveness Detection:** Implement UI prompts (e.g., "Blink your eyes", "Turn head left") and verify them using simple frame comparisons or a secondary liveness model to prevent spoofing.
+- [ ] **Liveness Detection:** Implement UI prompts (e.g., "Look straight", "Turn head left", "Turn head right") and verify them from open-source YuNet/TFLite/OpenCV landmarks to prevent simple photo replay attacks.
 - [ ] **Face Recognition (MobileFaceNet):** Crop the detected face, pass it to MobileFaceNet, and extract the 128D array.
 - [ ] **Cosine Similarity Matching:** Write a fast JavaScript (or JSI C++) function to compare the real-time 128D array against the SQLite database of embeddings. Threshold > 0.65 = Match.
 
