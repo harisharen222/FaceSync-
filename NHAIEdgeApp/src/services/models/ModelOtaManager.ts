@@ -31,7 +31,12 @@ class ModelOtaManager {
     const { backendBaseUrl, deviceJwt, deviceId } = this.config;
     if (!backendBaseUrl || !deviceJwt || !deviceId) return;
 
-    const response = await fetch(`${backendBaseUrl.replace(/\/$/, '')}/models/manifest`, {
+    let targetUrl = backendBaseUrl.replace(/\/$/, '');
+    if (targetUrl.includes(':8000')) {
+      targetUrl = targetUrl.replace(':8000', ':8004');
+    }
+
+    const response = await fetch(`${targetUrl}/models/manifest`, {
       headers: {
         Authorization: `Bearer ${deviceJwt}`,
       },
@@ -77,7 +82,12 @@ class ModelOtaManager {
     const { backendBaseUrl, deviceJwt, deviceId } = this.config;
     if (!backendBaseUrl || !deviceJwt || !deviceId || Object.keys(models).length === 0) return;
 
-    await fetch(`${backendBaseUrl.replace(/\/$/, '')}/models/status`, {
+    let targetUrl = backendBaseUrl.replace(/\/$/, '');
+    if (targetUrl.includes(':8000')) {
+      targetUrl = targetUrl.replace(':8000', ':8004');
+    }
+
+    await fetch(`${targetUrl}/models/status`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -5,8 +5,9 @@ require Pod::Executable.execute_command('node', ['-p',
     {paths: [process.argv[1]]},
   )', __dir__]).strip
 
-platform :ios, min_ios_version_supported
+platform :ios, '14.0'
 prepare_react_native_project!
+inhibit_all_warnings!
 
 linkage = ENV['USE_FRAMEWORKS']
 if linkage != nil
@@ -20,7 +21,8 @@ target 'NHAIEdgeApp' do
   use_react_native!(
     :path => config[:reactNativePath],
     # An absolute path to your application root.
-    :app_path => "#{Pod::Config.instance.installation_root}/.."
+    :app_path => "#{Pod::Config.instance.installation_root}/..",
+    :hermes_enabled => false
   )
 
   target 'NHAIEdgeAppTests' do
@@ -36,5 +38,28 @@ target 'NHAIEdgeApp' do
       :mac_catalyst_enabled => false,
       # :ccache_enabled => true
     )
+    
+    # Disable User Script Sandboxing on the Pods project level
+    installer.pods_project.build_configurations.each do |config|
+      config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
+    end
+    
+    # Enforce iOS 14.0 and disable User Script Sandboxing on all Pod targets to satisfy modern APIs and resolve sandbox permission errors
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
+        config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
+      end
+    end
+
+    # Also disable User Script Sandboxing on the main project targets
+    installer.aggregate_targets.each do |target|
+      target.user_project.targets.each do |proj_target|
+        proj_target.build_configurations.each do |config|
+          config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
+        end
+      end
+      target.user_project.save
+    end
   end
 end

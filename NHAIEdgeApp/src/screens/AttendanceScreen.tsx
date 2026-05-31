@@ -37,6 +37,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
         await requestPermission();
       }
 
+      livenessTracker.reset();
+      setChallengeIndex(0);
       offlineSyncManager.initDB();
       offlineSyncManager.configure({ backendBaseUrl, deviceId, deviceJwt });
       offlineSyncManager.startNetworkSync();
@@ -79,6 +81,8 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
   }, []);
 
   const captureLivenessStep = useCallback(async () => {
+    if (isProcessingMatch) return;
+
     const observations = [
       { landmarks: { leftEye: { x: 40, y: 40 }, rightEye: { x: 140, y: 40 }, nose: { x: 90, y: 80 } } },
       { landmarks: { leftEye: { x: 40, y: 40 }, rightEye: { x: 140, y: 40 }, nose: { x: 68, y: 82 } } },
@@ -92,7 +96,7 @@ export const AttendanceScreen: React.FC<AttendanceScreenProps> = ({
     if (state.isLive) {
       await saveMatchedAttendance(state.score);
     }
-  }, [challengeIndex, saveMatchedAttendance]);
+  }, [challengeIndex, isProcessingMatch, saveMatchedAttendance]);
 
   if (!hasPermission) {
     return <Text style={styles.statusText}>No camera permission</Text>;

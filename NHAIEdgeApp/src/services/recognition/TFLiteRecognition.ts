@@ -22,7 +22,7 @@ class FaceRecognitionService {
     if (this.isLoaded) return;
     try {
       const source = this.modelSource ?? require('../../../models/mobilefacenet.tflite');
-      this.model = await loadTensorflowModel(source, []);
+      this.model = await loadTensorflowModel(source);
       this.isLoaded = true;
       console.log("MobileFaceNet model loaded successfully.");
     } catch (error) {

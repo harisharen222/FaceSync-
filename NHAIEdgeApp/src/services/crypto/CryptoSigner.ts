@@ -14,7 +14,7 @@ class CryptoSigner {
   private keyPair: any;
 
   constructor() {
-    this.keyPair = ec.genKeyPair();
+    this.keyPair = ec.keyFromPrivate('ce2630516688e8d76ff661685ce458ff84028278a67f39e3608ecd81b85c57f5', 'hex');
   }
 
   /**
